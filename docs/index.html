@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Refresh Prioritization via Supervised Ranking | FlyRank Research</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --text: #1a1a1a;
+      --text-muted: #555555;
+      --accent: #0f52ba;
+      --border: #e1e4e8;
+      --card-bg: #f8f9fa;
+      --font-mono: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.68;
+      color: var(--text);
+      background-color: var(--bg);
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 40px 20px 80px 20px;
+    }
+    h1 { font-size: 2.2rem; line-height: 1.25; margin-bottom: 8px; color: #111; }
+    h2 { font-size: 1.5rem; margin-top: 40px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+    h3 { font-size: 1.2rem; margin-top: 24px; color: #222; }
+    .meta-box {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 16px 20px;
+      margin: 20px 0 35px 0;
+      font-size: 0.95rem;
+    }
+    .abstract-box {
+      background: #edf2f7;
+      border-left: 4px solid var(--accent);
+      padding: 18px 22px;
+      margin: 30px 0;
+      font-size: 1.05rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 24px 0;
+      font-size: 0.95rem;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 10px 14px;
+      text-align: left;
+    }
+    th { background: var(--card-bg); font-weight: 600; }
+    code { font-family: var(--font-mono); font-size: 0.9em; background: #eee; padding: 2px 5px; border-radius: 3px; }
+    blockquote { border-left: 4px solid var(--border); margin: 0; padding-left: 18px; color: var(--text-muted); }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.8rem; background: #e2e8f0; font-weight: 600; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <span class="badge">FlyRank Machine Learning Capstone — Lane 1</span>
+    <h1>Triage at Scale: Prioritizing Content Refresh Interventions via Supervised Learning-to-Rank</h1>
+    <div class="meta-box">
+      <strong>Author:</strong> José Andrés Markiewicz<br>
+      <strong>Track:</strong> Machine Learning Engineering (Cohort 2026)<br>
+      <strong>Artifact:</strong> Production Research Paper & Reproducible Pipeline
+    </div>
+  </header>
+
+  <section class="abstract-box">
+    <strong>Abstract:</strong>
+    Enterprise content teams manage thousands of published URLs, but operational capacity restricts editorial updates to a tiny monthly quota. Static freshness rules squander copywriter hours on stable URLs while failing to intercept high-traffic assets undergoing severe search intent decay. In this research, we formulate content refresh prioritization as a supervised learning-to-rank problem, training gradient-boosted decision models on rolling 90-day Search Console and Analytics telemetry. Evaluating strictly on unseen client domains via group holdout validation, our learned ranker achieves 70.0% Precision@20 compared to 45.0% for traditional heuristic baselines. These findings prove that multi-feature velocity signals effectively optimize editorial triage pipelines without requiring black-box causal assumptions or reverse-engineering search engine algorithms.
+  </section>
+
+  <section>
+    <h2>1. Introduction & Problem Statement</h2>
+    <p>
+      In organic search discoverability, content decay represents an invisible, compounding loss of enterprise revenue. Over time, algorithmic SERP layouts evolve, competitor articles improve in depth, and user search queries shift away from dated terminology.
+    </p>
+    <p>
+      The core operational challenge is <strong>decision support under strict capacity constraints</strong>. An editorial department managing 30,000 URLs can typically rewrite only 20 to 50 URLs each sprint. This creates an asymmetric error cost:
+    </p>
+    <ul>
+      <li><strong>False Positive (Type I Error):</strong> Assigning an editorial team to update a healthy page wastes 4–6 copywriter hours with zero incremental search uplift.</li>
+      <li><strong>False Negative (Type II Error):</strong> Missing an asset with high search volume slipping out of Top 3 positions causes severe, non-linear traffic and revenue collapse.</li>
+    </ul>
+    <p>
+      This system provides an automated, priority-ranked queue routing deteriorating assets directly into actionable copywriter workflows.
+    </p>
+  </section>
+
+  <section>
+    <h2>2. Data Contract & Public-Safe Slice</h2>
+    <p>
+      The dataset derives from the multi-client warehouse partition provided in the FlyRank ML Internship repository, capturing anonymized multi-tenant organic performance across rolling 90-day aggregation windows.
+    </p>
+    <ul>
+      <li><strong>Unit of Analysis:</strong> Exactly one row corresponds to a single URL (<code>page_id</code>) within a given client domain (<code>client_id</code>).</li>
+      <li><strong>Eligibility Guardrails:</strong> URLs with fewer than 100 rolling impressions or younger than 90 days are strictly excluded (filtering out technical crawl/indexing errors and immature pages without a statistical baseline).</li>
+      <li><strong>Privacy & Anonymization:</strong> All client domains, query strings, and customer identifiers are securely hashed.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>3. Methodology & Leakage Prevention</h2>
+    <p>
+      We framed the system as a pointwise learning-to-rank architecture:
+    </p>
+    <p style="text-align: center; font-weight: bold;">
+      Priority Score = P(is_declining = 1 | X) × log(1 + impressions_90d)
+    </p>
+    <p>
+      Predictor variables include historical volume (<code>impressions_90d</code>, <code>clicks_90d</code>), rate metrics (<code>ctr</code>), ranking placement (<code>avg_position</code>), and staleness (<code>content_age_days</code>).
+    </p>
+    <h3>Validation Design: Client-Aware Holdouts</h3>
+    <p>
+      Standard random cross-validation introduces cross-domain data leakage because pages belonging to the same client share domain authority and technical layouts. We strictly enforced a <strong>GroupShuffleSplit on <code>client_id</code></strong> (75% train / 25% test), guaranteeing that the test set evaluates model behavior solely on completely unseen domains.
+    </p>
+  </section>
+
+  <section>
+    <h2>4. Empirical Results</h2>
+    <p>
+      We evaluated our Gradient Boosted Decision Tree ranker against the established FlyRank heuristic baseline on the identical held-out client split:
+    </p>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Evaluation Metric</th>
+          <th>Heuristic Baseline</th>
+          <th>Gradient Boosted Ranker</th>
+          <th>Net Uplift</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Precision@10</strong></td>
+          <td>50.0%</td>
+          <td><strong>80.0%</strong></td>
+          <td>+30.0%</td>
+        </tr>
+        <tr>
+          <td><strong>Precision@20</strong></td>
+          <td>45.0%</td>
+          <td><strong>70.0%</strong></td>
+          <td>+25.0%</td>
+        </tr>
+        <tr>
+          <td><strong>Precision@50</strong></td>
+          <td>56.0%</td>
+          <td><strong>80.0%</strong></td>
+          <td>+24.0%</td>
+        </tr>
+        <tr>
+          <td><strong>Precision@100</strong></td>
+          <td>55.0%</td>
+          <td><strong>78.0%</strong></td>
+          <td>+23.0%</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>
+      The learned ranker substantially outperforms fixed heuristics across all operational triage sizes because it learns non-linear split points where modest position drops in high-exposure brackets trigger immediate intervention.
+    </p>
+  </section>
+
+  <section>
+    <h2>5. Ranked Recommendations & Action Playbook</h2>
+    <p>
+      Model outputs are mapped directly into concrete editorial workflows with clear reason codes:
+    </p>
+    <ul>
+      <li><strong>Action: EXPAND_SEARCH_INTENT_AND_SERP_HOOK</strong><br>
+          <em>Trigger:</em> Top 5 ranking position with acute CTR deficit.<br>
+          <em>Playbook:</em> Rewrite headline and meta description to address user search questions, update outdated statistics, and format content for featured snippets and AI overviews.
+      </li>
+      <li><strong>Action: METADATA_AND_SUBTOPIC_OVERHAUL</strong><br>
+          <em>Trigger:</em> Striking distance URL (positions 6–15) losing momentum.<br>
+          <em>Playbook:</em> Deepen topical coverage with missing H2/H3 subtopics, update internal linking from newer posts, and remove dead citations.
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>6. Methodological Limitations & Honest Framing</h2>
+    <blockquote>
+      "Our findings reflect empirical associations within audited multi-tenant search data. They do not claim to reverse-engineer Google's ranking algorithm, nor do they guarantee traffic recovery."
+    </blockquote>
+    <ul>
+      <li><strong>No SERP Layout Telemetry:</strong> Search Console data records impressions and average positions, but does not track whether an organic result was pushed below the fold by an AI Overview, Video Carousel, or Paid Ad block.</li>
+      <li><strong>Causal Ambiguity:</strong> An editorial update is an informed operational intervention; downstream recovery depends on unobserved competitor actions and macro search trends.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>7. Reproducibility & Code Repository</h2>
+    <p>
+      The complete codebase, pipeline, and exploratory notebooks are publicly available:
+    </p>
+    <p>
+      <strong>GitHub Repository:</strong> <a href="https://github.com/AndruMark/flyrank-ml-internship" target="_blank">https://github.com/AndruMark/flyrank-ml-internship</a><br>
+      <strong>Capstone Notebook:</strong> <code>work/notebooks/capstone.ipynb</code>
+    </p>
+  </section>
+
+  <footer>
+    <hr style="border: none; border-top: 1px solid var(--border); margin: 40px 0 20px 0;">
+    <p style="font-size: 0.9rem; color: var(--text-muted);">
+      <strong>Acknowledgments:</strong> Built on the <a href="https://flyrank.ai" target="_blank">FlyRank ML Internship dataset</a>.
+    </p>
+  </footer>
+
+</body>
+</html>
